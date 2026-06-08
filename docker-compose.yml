@@ -1,0 +1,12 @@
+services:
+  ml-service:
+    build: .
+    container_name: adaptivelearningml
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      TRANSCRIBE_WORKERS: ${TRANSCRIBE_WORKERS:-4}
+      ANALYSIS_WORKERS: ${ANALYSIS_WORKERS:-4}
+    restart: unless-stopped
