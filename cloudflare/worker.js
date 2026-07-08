@@ -18,7 +18,11 @@
  *   GEMINI_API_KEY         - real Gemini API key
  */
 
-const GROQ_UPSTREAM = "https://api.groq.com/openai/v1";
+// NOTE: the Groq SDK's own default base_url is "https://api.groq.com" (root) -
+// it appends "/openai/v1/..." to whatever base_url it's given. Do NOT add
+// "/openai/v1" here or requests end up double-prefixed
+// (/openai/v1/openai/v1/chat/completions -> 404).
+const GROQ_UPSTREAM = "https://api.groq.com";
 const GOOGLE_UPSTREAM = "https://generativelanguage.googleapis.com";
 
 export default {
