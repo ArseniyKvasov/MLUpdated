@@ -325,7 +325,10 @@ class GroqService:
                     response = await self._google_client.aio.models.generate_content(
                         model=model,
                         contents="Hi",
-                        config=self.generation_service._analysis_generation_config(max_output_tokens=1),
+                        config=self.generation_service._analysis_generation_config(
+                            max_output_tokens=16,
+                            disable_thinking=True,
+                        ),
                     )
                 return bool(getattr(response, "text", None))
             except Exception:

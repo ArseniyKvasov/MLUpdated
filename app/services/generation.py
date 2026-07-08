@@ -55,6 +55,7 @@ class GenerationService:
         *,
         json_response: bool = False,
         max_output_tokens: Optional[int] = None,
+        disable_thinking: bool = False,
     ) -> dict[str, Any]:
         config: dict[str, Any] = {
             "temperature": self._ANALYSIS_TEMPERATURE,
@@ -65,6 +66,13 @@ class GenerationService:
             config["response_mime_type"] = "application/json"
         if max_output_tokens is not None:
             config["max_output_tokens"] = max_output_tokens
+        if disable_thinking:
+            # Newer Gemini models spend part of max_output_tokens on internal
+            # "thinking" before producing visible text, which can leave a
+            # tiny token budget with no visible output at all. Disabling it
+            # keeps small-budget calls (e.g. health checks) actually
+            # producing text.
+            config["thinking_config"] = {"thinking_budget": 0}
         return config
 
     async def chat_json(
