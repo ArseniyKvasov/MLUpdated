@@ -54,6 +54,21 @@ LOCAL_LLM_MODEL=gemma
 
 См. `.env.example` для полного списка переменных и как их получить в Cloudflare Dashboard.
 
+## AI-запросы через Cloudflare Worker
+
+По умолчанию сервис обращается к Groq и Gemini напрямую, используя `GROQ_API_KEY`/`GEMINI_API_KEY` из своего окружения.
+
+Если нужно, чтобы эти запросы шли через Cloudflare (единая точка выхода, логи/лимиты на стороне Cloudflare, реальные ключи провайдеров не хранятся на хосте ML-сервиса), задайте:
+
+```env
+CLOUDFLARE_AI_WORKER_URL=https://ai-proxy.your-subdomain.workers.dev
+CLOUDFLARE_AI_WORKER_SECRET=your_shared_secret
+```
+
+При этом `GROQ_API_KEY`/`GEMINI_API_KEY` в `.env` ML-сервиса становятся не нужны — реальные ключи провайдеров хранятся только в secrets самого Worker'а. Сервис шлёт запросы на `<CLOUDFLARE_AI_WORKER_URL>/groq/...` и `<CLOUDFLARE_AI_WORKER_URL>/google/...` с заголовком `X-Worker-Secret`, а Worker подставляет реальные ключи и проксирует запрос к api.groq.com / generativelanguage.googleapis.com.
+
+Код Worker'а и инструкция по деплою — в [cloudflare/](cloudflare/).
+
 
 ## Локальный запуск
 

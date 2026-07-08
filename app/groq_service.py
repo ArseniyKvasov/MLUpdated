@@ -71,23 +71,48 @@ class GroqService:
         self.local_llm_url = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
         self.local_llm_model = os.getenv("LOCAL_LLM_MODEL", "gemma")
         
+        # Cloudflare Worker AI proxy: when configured, Groq/Gemini requests are
+        # routed through a Worker that holds the real provider keys as secrets.
+        # This service only needs a shared secret to authenticate to the Worker.
+        self._cf_worker_url = os.getenv("CLOUDFLARE_AI_WORKER_URL", "").strip().rstrip("/")
+        self._cf_worker_secret = os.getenv("CLOUDFLARE_AI_WORKER_SECRET", "").strip()
+        self._use_cf_worker = bool(self._cf_worker_url and self._cf_worker_secret)
+        if bool(self._cf_worker_url) != bool(self._cf_worker_secret):
+            raise RuntimeError(
+                "CLOUDFLARE_AI_WORKER_URL и CLOUDFLARE_AI_WORKER_SECRET должны быть заданы вместе."
+            )
+        _worker_headers = {"X-Worker-Secret": self._cf_worker_secret} if self._use_cf_worker else None
+
         self._groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
-        if self.transcriber_type == "groq" and not self._groq_api_key:
-            raise RuntimeError("Не передан GROQ_API_KEY. Добавьте его в .env.")
-            
-        self._groq_client = AsyncGroq(api_key=self._groq_api_key, max_retries=0) if self._groq_api_key else None
-        
+        if self.transcriber_type == "groq" and not self._groq_api_key and not self._use_cf_worker:
+            raise RuntimeError(
+                "Не передан GROQ_API_KEY и не сконфигурирован Cloudflare Worker (CLOUDFLARE_AI_WORKER_URL/SECRET). "
+                "Добавьте один из вариантов в .env."
+            )
+
+        self._groq_client = AsyncGroq(
+            api_key=self._groq_api_key or "cloudflare-worker-proxy",
+            base_url=f"{self._cf_worker_url}/groq" if self._use_cf_worker else None,
+            default_headers=_worker_headers,
+            max_retries=0,
+        ) if (self._groq_api_key or self._use_cf_worker) else None
+
         self._google_api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        if self.llm_type == "gemini" and not self._google_api_key:
-            raise RuntimeError("Не передан GEMINI_API_KEY. Добавьте его в .env.")
-            
+        if self.llm_type == "gemini" and not self._google_api_key and not self._use_cf_worker:
+            raise RuntimeError(
+                "Не передан GEMINI_API_KEY и не сконфигурирован Cloudflare Worker (CLOUDFLARE_AI_WORKER_URL/SECRET). "
+                "Добавьте один из вариантов в .env."
+            )
+
         self._google_client = genai.Client(
-            api_key=self._google_api_key,
+            api_key=self._google_api_key or "cloudflare-worker-proxy",
             http_options=types.HttpOptions(
+                base_url=f"{self._cf_worker_url}/google" if self._use_cf_worker else None,
+                headers=_worker_headers,
                 client_args={'http2': False, 'timeout': 600},
                 async_client_args={'http2': False, 'timeout': 600}
             )
-        ) if self._google_api_key else None
+        ) if (self._google_api_key or self._use_cf_worker) else None
         self._concurrency_limit_sem = asyncio.Semaphore(10)
         
         # Instantiate split services
