@@ -87,17 +87,42 @@ def get_chunk_storage() -> Optional[ChunkStorage]:
     bucket_name = os.getenv("R2_BUCKET_NAME")
     endpoint_url = os.getenv("R2_ENDPOINT_URL")
 
+    # .env.example ships with placeholder values (e.g. "your_cloudflare_account_id").
+    # If someone copies it without filling these in, treat R2 as unconfigured
+    # instead of trying to build a client with a bogus endpoint.
+    placeholder_prefixes = ("your_", "REPLACE_ME")
+    values = {
+        "CLOUDFLARE_ACCOUNT_ID": account_id,
+        "R2_ACCESS_KEY_ID": access_key_id,
+        "R2_SECRET_ACCESS_KEY": secret_access_key,
+        "R2_BUCKET_NAME": bucket_name,
+    }
+    placeholder_vars = [
+        name for name, value in values.items()
+        if value and value.startswith(placeholder_prefixes)
+    ]
+    if placeholder_vars:
+        logger.warning(
+            f"R2 storage vars look like unfilled placeholders ({', '.join(placeholder_vars)}); "
+            "treating R2 as unconfigured and falling back to local temp files."
+        )
+        return None
+
     if not (account_id and access_key_id and secret_access_key and bucket_name):
         logger.info("R2 storage is not configured; falling back to local temp files for chunk uploads.")
         return None
 
-    _storage_instance = ChunkStorage(
-        account_id=account_id,
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-        bucket_name=bucket_name,
-        endpoint_url=endpoint_url,
-    )
+    try:
+        _storage_instance = ChunkStorage(
+            account_id=account_id,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            bucket_name=bucket_name,
+            endpoint_url=endpoint_url,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to initialize R2 storage client, falling back to local temp files: {exc}")
+        return None
     logger.info(f"R2 storage configured for bucket '{bucket_name}'.")
     return _storage_instance
 
