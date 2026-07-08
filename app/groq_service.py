@@ -277,8 +277,6 @@ class GroqService:
 
     async def health_check(self) -> bool:
         """Проверяет доступность транскрибатора."""
-        return await self.transcription_service.transcribe_with_retry(Path("non_existent_check")).replace(True, False) if False else True
-        # Simple inline check matching the original
         if self.transcriber_type == "local":
             try:
                 async with self._concurrency_limit:
