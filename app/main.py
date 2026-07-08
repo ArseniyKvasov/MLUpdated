@@ -7,6 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 import shutil
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
@@ -17,6 +18,7 @@ from groq import APIError
 from dotenv import load_dotenv
 
 from app.groq_service import GroqService
+from app.services.storage import get_chunk_storage
 from app.schemas import (
     ErrorResponse,
     ChunkAnalyzeRequest,
@@ -285,9 +287,36 @@ def _store_upload_file_sync(audio_file: UploadFile, suffix: str) -> Path:
     return Path(temp.name)
 
 
-async def _store_upload_file(audio_file: UploadFile) -> Path:
+def _upload_to_storage_sync(audio_file: UploadFile, key: str) -> None:
+    storage = get_chunk_storage()
+    assert storage is not None
+    storage.upload_fileobj(audio_file.file, key)
+
+
+async def _store_upload_file(audio_file: UploadFile) -> dict[str, str]:
+    """Persists the uploaded chunk so a (possibly different) worker process can read it.
+
+    Uses Cloudflare R2 when configured (CLOUDFLARE_ACCOUNT_ID / R2_* env vars),
+    which decouples the FastAPI instance that accepted the upload from the
+    worker that later processes it. Falls back to a local temp file otherwise.
+    """
     suffix = _suffix_from_name(audio_file.filename or "chunk.bin", audio_file.content_type or "application/octet-stream")
-    return await asyncio.to_thread(_store_upload_file_sync, audio_file, suffix)
+    storage = get_chunk_storage()
+    if storage is not None:
+        key = f"chunks/{uuid4().hex}{suffix}"
+        await asyncio.to_thread(_upload_to_storage_sync, audio_file, key)
+        return {"storage_key": key}
+    file_path = await asyncio.to_thread(_store_upload_file_sync, audio_file, suffix)
+    return {"file_path": str(file_path)}
+
+
+async def _cleanup_upload(storage_info: dict[str, str]) -> None:
+    if "storage_key" in storage_info:
+        storage = get_chunk_storage()
+        if storage is not None:
+            await asyncio.to_thread(storage.delete, storage_info["storage_key"])
+    elif "file_path" in storage_info:
+        await asyncio.to_thread(_safe_unlink, Path(storage_info["file_path"]))
 
 
 @app.post("/transcribe-chunk", response_model=TaskAcceptedResponse, status_code=202)
@@ -299,10 +328,10 @@ async def transcribe_chunk(
     _: None = Depends(require_api_key),
 ) -> Any:
     logger.info(f"/transcribe-chunk called: chunk_id={chunk_id}, start_ms={start_ms}, end_ms={end_ms}, filename={audio_file.filename}")
-    file_path = await _store_upload_file(audio_file)
+    storage_info = await _store_upload_file(audio_file)
     try:
         payload = {
-            "file_path": str(file_path),
+            **storage_info,
             "file_name": audio_file.filename or "chunk.bin",
             "mime_type": audio_file.content_type or "application/octet-stream",
             "chunk_id": chunk_id,
@@ -311,7 +340,7 @@ async def transcribe_chunk(
         }
         return await _submit_task("transcribe-chunk", payload)
     except Exception:
-        await asyncio.to_thread(_safe_unlink, file_path)
+        await _cleanup_upload(storage_info)
         raise
     finally:
         await audio_file.close()

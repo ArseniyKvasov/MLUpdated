@@ -34,7 +34,8 @@ class TranscribeChunkRequest(BaseModel):
 
 
 class TranscribeChunkJobRequest(BaseModel):
-    file_path: str
+    file_path: Optional[str] = None
+    storage_key: Optional[str] = None
     file_name: str
     mime_type: str
     chunk_id: int

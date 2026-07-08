@@ -47,6 +47,7 @@ from app.utils.normalization import (
 )
 from app.services.transcription import TranscriptionService, safe_unlink
 from app.services.generation import GenerationService
+from app.services.storage import get_chunk_storage
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
@@ -229,6 +230,26 @@ class GroqService:
     def _safe_unlink(path: Path) -> None:
         safe_unlink(path)
 
+    @staticmethod
+    async def _resolve_audio_path(payload: TranscribeChunkJobRequest) -> tuple[Path, Optional[str]]:
+        """Returns a local path to the audio chunk plus the R2 key to clean up (if any).
+
+        Chunks uploaded through R2 are downloaded once here so the rest of the
+        transcription pipeline keeps working with a plain local file.
+        """
+        if payload.storage_key:
+            storage = get_chunk_storage()
+            if storage is None:
+                raise RuntimeError(
+                    "Задача ссылается на storage_key, но R2 не сконфигурирован (CLOUDFLARE_ACCOUNT_ID/R2_*)."
+                )
+            suffix = Path(payload.file_name or "chunk.bin").suffix or ".bin"
+            audio_path = await asyncio.to_thread(storage.download_to_file, payload.storage_key, suffix)
+            return audio_path, payload.storage_key
+        if not payload.file_path:
+            raise RuntimeError("В задаче транскрибации не указан ни file_path, ни storage_key.")
+        return Path(payload.file_path), None
+
     async def health_check(self) -> bool:
         """Проверяет доступность транскрибатора."""
         return await self.transcription_service.transcribe_with_retry(Path("non_existent_check")).replace(True, False) if False else True
@@ -289,11 +310,15 @@ class GroqService:
 
     async def transcribe_chunk(self, payload: TranscribeChunkJobRequest) -> dict[str, Any]:
         async with self._concurrency_limit:
-            audio_path = Path(payload.file_path)
+            audio_path, storage_key = await self._resolve_audio_path(payload)
             try:
                 transcription = await self._transcribe_with_retry(audio_path)
             finally:
                 await asyncio.to_thread(self._safe_unlink, audio_path)
+                if storage_key is not None:
+                    storage = get_chunk_storage()
+                    if storage is not None:
+                        await asyncio.to_thread(storage.delete, storage_key)
 
         transcript: list[dict[str, Any]] = []
 
