@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 import shutil
 
@@ -122,9 +122,29 @@ def get_task_queue() -> TaskQueueManager:
     return task_queue
 
 
-def require_api_key(x_api_key: str = Header(default="")) -> None:
+def _mask_key(key: Optional[str]) -> str:
+    if not key:
+        return "<empty>"
+    if len(key) <= 8:
+        return f"len={len(key)}"
+    return f"len={len(key)} {key[:4]}...{key[-4:]}"
+
+
+def require_api_key(
+    request: Request,
+    x_api_key: str = Header(default=""),
+) -> None:
     expected_api_key = os.getenv("API_KEY")
     if not expected_api_key or x_api_key != expected_api_key:
+        logger.warning(
+            "Auth failed on %s %s from %s (x-forwarded-for=%s): received=%s expected=%s",
+            request.method,
+            request.url.path,
+            request.client.host if request.client else "unknown",
+            request.headers.get("x-forwarded-for", "-"),
+            _mask_key(x_api_key),
+            _mask_key(expected_api_key),
+        )
         raise HTTPException(status_code=401, detail="Некорректный API ключ.")
 
 
